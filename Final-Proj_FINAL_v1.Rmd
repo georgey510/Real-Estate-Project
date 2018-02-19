@@ -1,0 +1,467 @@
+---
+title: "Final Project"
+author: "Zachary Gross"
+date: "12/6/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+dir <- "/Users/Zach/Downloads"
+knitr::opts_knit$set(root.dir = dir)
+if(!require('pacman')) {
+  install.packages('pacman')
+}
+pacman::p_load(dplyr, ggplot2, glmnet, car, rpart, randomForest, caret, leaps, xtable, nnet)
+```
+Loading data
+```{r}
+data <- read.csv("AmesHousing.csv")
+```
+EDA:
+
+Importance of the recession?
+```{r}
+data %>%
+  ggplot(aes(x = as.factor(Yr.Sold), y = SalePrice)) + geom_boxplot()
+```
+No discernible breakage in price after the recession. This is surprising, but an article from CNBC shows that housing prices in another city in Iowa actually increased by 0.1% during the recession: https://www.cnbc.com/2009/06/22/Americas-15-Most-Recession-Resistant-Cities.html?slide=4
+
+```{r}
+as.factor(data$MS.SubClass)
+summary(data)
+```
+
+```{r}
+
+exterior.plot <- data %>%
+  ggplot(aes(x = Exterior.1st, y = SalePrice, fill = Exter.Qual)) %>% 
+  + geom_boxplot()
+jpeg('exteriorplot.jpeg')
+plot(exterior.plot)
+dev.off()
+```
+
+```{r}
+data %>%
+  ggplot(aes(x = Total.Bsmt.SF, y = SalePrice, color = Bsmt.Qual)) + geom_point()
+```
+```{r}
+data %>%
+  ggplot(aes(x = Fireplaces, y = Gr.Liv.Area)) + geom_point()
+```
+```{r}
+garage.area <- data %>%
+  ggplot(aes(x = Garage.Cars, y = Garage.Area)) + geom_point()
+jpeg('garage.area.jpg')
+plot(garage.area)
+dev.off()
+
+```
+
+```{r}
+wood.deck <- data %>%
+  ggplot(aes(x = Wood.Deck.SF, y = SalePrice)) + geom_point()
+jpeg('wooddeckplot.jpg')
+plot(wood.deck)
+dev.off()
+```
+
+```{r}
+data %>%
+  ggplot(aes(x = Sale.Type, y = SalePrice)) + geom_point()
+```
+
+```{r}
+data %>%
+  ggplot(aes(x = Gr.Liv.Area, y = SalePrice)) + geom_point()
+```
+
+There are 5 outliers: two have outlier prices and three have outlier sizes. Also, we are kicking out partial sales.
+
+# Taking out unnecessary columns
+```{r}
+data2 <- data[, -c(1:3,7:13, 15:16, 23:24, 27:28, 32:39, 41, 43:47, 49:50, 52, 54, 56:59, 60:63, 65:67, 73:77, 80)]
+```
+
+EDA on data2:
+```{r}
+#summary(data2)
+# Taking out Lot.Frontage because of NA's
+data3 <- data2[,-2]
+# Take out Sale Condition = Partial
+data4 <- data3 %>%
+  filter(Sale.Condition != "Partial", 
+         Garage.Area != is.na(Garage.Area),
+         Total.Bsmt.SF != is.na(Total.Bsmt.SF)) %>%
+  mutate(SalePrice = log(SalePrice))
+summary(data4)
+```
+
+Checking for outliers:
+```{r}
+data4 %>%
+  ggplot(aes(x = Gr.Liv.Area, y = SalePrice)) + geom_point()
+```
+Converting Wood.Deck.SF, Open.Porch.SF, Enclosed.Porch, Screen.Porch and X3Ssn.Porch into categorical variables
+```{r}
+#Wood Deck SF
+data5 <- data4
+data5$Wood.Deck.SF <- factor(ifelse(data5$Wood.Deck.SF > 0, "1","0"))
+#Open.Porch.SF
+data5$Open.Porch.SF <- factor(ifelse(data5$Open.Porch.SF > 0, "1","0"))
+#Enclosed.Porch
+data5$Enclosed.Porch <- factor(ifelse(data5$Enclosed.Porch > 0, "1","0"))
+#Screen Porch
+data5$Screen.Porch <- factor(ifelse(data5$Screen.Porch > 0, "1","0"))
+#X3Ssn.Porch
+data5$X3Ssn.Porch <- factor(ifelse(data5$X3Ssn.Porch > 0, "1","0"))
+summary(data5)
+```
+
+No data points seem unreasonable.
+
+Plan for analysis:
+Dataframe of kept variables with explanations For writeup:
+```{r}
+data5.w <- data5[0,]
+data5.z <- colnames(data5.w)
+data5.z <- as.data.frame(data5.z)
+data5.z$Description <- NA
+data5.z[1,2] <- "Identifies the general zoning classification of the sale."
+data5.z[2,2] <- "Lot size in square feet"
+data5.z[3,2] <- "Physical locations within Ames city limits"
+data5.z[4,2] <- "Type of dwelling"
+data5.z[5,2] <- "Style of dwelling"
+data5.z[6,2] <- "Rates the overall material and finish of the house"
+data5.z[7,2] <- "Rates the overall condition of the house"
+data5.z[8,2] <- "Original construction date"
+data5.z[9,2] <- "Remodel date"
+data5.z[10,2] <- "Exterior covering on house"
+data5.z[11,2] <- "Additional Exterior covering on house"
+data5.z[12,2] <- "Evaluates the quality of the material on the exterior"
+data5.z[13,2] <- "Evaluates the present condition of the material on the exterior"
+data5.z[14,2] <- "Type of foundation"
+data5.z[15,2] <- "Total square feet of basement area"
+data5.z[16,2] <- "Heating quality and condition"
+data5.z[17,2] <- "Above grade (ground) living area square feet"
+data5.z[18,2] <- "Full bathrooms above ground"
+data5.z[19,2] <- "Bedrooms above ground"
+data5.z[20,2] <- "Kitchen quality"
+data5.z[21,2] <- "Size of garage in square feet"
+data5.z[22,2] <- "Presence of a Wood Deck"
+data5.z[23,2] <- "Presence of an Open Porch"
+data5.z[24,2] <- "Presence of an Enclosed Porch"
+data5.z[25,2] <- "Presence of a Three-Season Porch"
+data5.z[26,2] <- "Presence of a Screen Porch"
+data5.z[27,2] <- "Month Sold"
+data5.z[28,2] <- "Year Sold"
+data5.z[29,2] <- "Condition of Sale"
+data5.z[30,2] <- "Sale Price"
+names(data5.z)[names(data5.z) == 'data5.z'] <- 'Variable Name'
+```
+
+```{r}
+data2.z <- colnames(data[, c(1:3,7:13, 15:16, 23:24, 27:28, 32:39, 41, 43:47, 49:50, 52, 54, 56:59, 60:63, 65:67, 73:77, 80)])
+data2.z <- as.data.frame(data2.z)
+data2.z$Description <- c("Observation Number", "Parcel Identification Number", "Type of Dwelling", "Type of Road Access", "Type of Alley Access to Property", "General Shape of Property", "Flatness of Property", "Utilities", "Lot Configuration", "Land Slope", "Proximity to Various Conditions", "Proximity to Various Conditions If More Than One Exists", "Type of Roof", "Roof Material", "Veneer Masonry Type", "Veneer Masonry Area", "Evaluates Basement Height", "Evaluates General Condition of Basement", "Refers to Walkout or Garden Level Walls", "Rating of Basement Finished Area", "Type 1 Finished Square Feet", "Rating of Basement Finished Areas if there are more than 1", "Finished Square Feet of Areas if there are more than 1", "Unifinished Square Feet of Basement Area", "Type of Heating", "Central Air Conditioning", "Electrical System", "First Floor Area in Square Feet", "Second Floor Area in Square Feet", "Low Quality Finished Square Feet", "Number of Full Basement Bathrooms", "Number of Half Basement Bathrooms", "Number of Half Bathrooms", "Kitchens Above Ground", "Total Rooms Above Ground", "Home Functionality", "Number of Fireplaces", "Fireplace Quality", "Garage Location", "Year Garage Was Built", "Interior Finish of Garage", "Size of Garage in Car Capacity", "Garage Quality", "Garage Condition", "Whether or Not the Driveway is Paved", "Pool Area in Square Feet", "Pool Quality", "Fence", "Miscellaneous Features", "Value of Miscellaneous Features", "Type of Sale")
+names(data2.z)[names(data2.z) == 'data2.z'] <- 'Variable Name'
+
+```
+
+LASSO/Elastic Net
+
+```{r}
+data6 <- data5[,-6]
+X <- model.matrix(data6$SalePrice~., data6)[,-1]
+Y <- data6[,29]
+
+set.seed(10)
+
+#Lasso 
+fit.cv <- cv.glmnet(X, Y, alpha=.99, nfolds = 10)  
+jpeg('cv.plot.jpg')
+plot(fit.cv)
+dev.off()
+
+fit.1se <- glmnet(X, Y, alpha=.99, lambda=fit.cv$lambda.1se)
+fit.1se.beta <- coef(fit.1se)
+beta <- fit.1se.beta[which(fit.1se.beta !=0),] # non zero beta's
+
+beta <- as.matrix(beta);
+# rownames(beta)
+```
+
+```{r}
+lasso.fit <- lm(SalePrice ~ MS.Zoning + Lot.Area + Neighborhood + Bldg.Type + House.Style + Overall.Cond + Year.Built + Year.Remod.Add + Exterior.1st + Exterior.2nd + Exter.Qual + Exter.Cond + Foundation + Total.Bsmt.SF + Heating.QC + Gr.Liv.Area + Bedroom.AbvGr + Kitchen.Qual + Garage.Area + Wood.Deck.SF + Open.Porch.SF + Enclosed.Porch + Screen.Porch + Yr.Sold + Sale.Condition, data6)
+Anova(lasso.fit)
+```
+We remove Exterior.2nd because it has the highest P-Value. 
+```{r}
+lasso.fit.2 <- lm(SalePrice ~ MS.Zoning + Lot.Area + Neighborhood + Bldg.Type + House.Style + Overall.Cond + Year.Built + Year.Remod.Add + Exterior.1st + Exter.Qual + Exter.Cond + Foundation + Total.Bsmt.SF + Heating.QC + Gr.Liv.Area + Bedroom.AbvGr + Kitchen.Qual + Garage.Area + Wood.Deck.SF + Open.Porch.SF + Enclosed.Porch + Screen.Porch + Yr.Sold + Sale.Condition, data6)
+Anova(lasso.fit.2)
+```
+We remove Year.Remod.Add because it has the highest remaining P-value.
+```{r}
+lasso.fit.3 <- lm(SalePrice ~ MS.Zoning + Lot.Area + Neighborhood + Bldg.Type + House.Style + Overall.Cond + Year.Built + Exterior.1st + Exter.Qual + Exter.Cond + Foundation + Total.Bsmt.SF + Heating.QC + Gr.Liv.Area + Bedroom.AbvGr + Kitchen.Qual + Garage.Area + Wood.Deck.SF + Open.Porch.SF + Enclosed.Porch + Screen.Porch + Yr.Sold + Sale.Condition, data6)
+#Anova(lasso.fit.3)
+#summary(lasso.fit.3)
+```
+
+
+
+Regsubsets
+```{r}
+fit.backward <- regsubsets(SalePrice ~., data6, nvmax = 100, method = "backward")
+fit.back <- summary(fit.backward)
+data.frame(variables = (1:length(fit.back$rsq)),
+           r_squared = fit.back$rsq,
+           rss = fit.back$rss,
+           bic = fit.back$bic,
+           cp = fit.back$cp)
+```
+
+```{r}
+opt.size <- which.min(fit.back$cp)
+fit.var <- fit.back$which 
+fit.var[opt.size,]
+colnames(fit.var)[fit.var[opt.size,]]
+```
+
+```{r}
+fit.regsub <- lm(SalePrice ~ MS.Zoning + Lot.Area + Neighborhood + Bldg.Type + House.Style + Overall.Cond + Year.Built + Year.Remod.Add + Exterior.1st + Exterior.2nd + Exter.Qual + Exter.Cond + Foundation + Total.Bsmt.SF + Heating.QC + Gr.Liv.Area + Bedroom.AbvGr + Kitchen.Qual + Garage.Area + Wood.Deck.SF + Open.Porch.SF + Enclosed.Porch + Screen.Porch + Yr.Sold + Sale.Condition, data6)
+Anova(fit.regsub)
+```
+After removing Exterior.2nd and then Year.Remod.Add for having the highest p-values, this is the exact same model we got through LASSO.
+
+Checking to ensure assumptions hold:
+```{r}
+jpeg('residualplot.jpeg')
+plot(lasso.fit.3, 1, pch=16)
+dev.off() # residual plot
+jpeg('qqplot.jpeg')
+plot(lasso.fit.3, 2)
+dev.off() # qqplot
+```
+These all look fine.
+
+# Finding a house on Zillow
+
+Since we cannot easily access 2011 home listings, we are rescaling contemporary Zillow listing prices by by Ames House Price index. [Insert screenshot]
+
+Situation: We are three recent Penn graduates buying a house in Ames, Iowa after graduation. We are looking specifically looking for an area with other people our age, so we are focusing on the neighborhood around Iowa State University. We are using our model to determine if the houses we are looking at on Zillow are fairly valued.
+
+```{r}
+house.listing.1 <- "https://www.zillow.com/homes/for_sale/pmf,pf_pt/93959691_zpid/globalrelevanceex_sort/42.029428,-93.616745,42.016516,-93.637859_rect/15_zm/"
+maplest <- data6[1,]
+maplest[1] <- "RM"
+maplest[2] <- 6240
+maplest[3] <- "IDOTRR"
+maplest[4] <- "1Fam"
+maplest[5] <- "2Story"
+maplest[6] <- 5
+maplest[7] <- 1890
+maplest[9] <- "VinylSd"
+maplest[11] <- "TA"
+maplest[12] <- "TA"
+maplest[13] <- "CBlock"
+maplest[14] <- 668
+maplest[15] <- "Fa"
+maplest[16] <- 1316
+maplest[17] <- 2
+maplest[18] <- 3
+maplest[19] <- "Gd"
+maplest[20] <- 632
+maplest[21] <- "1"
+maplest[22] <- "0"
+maplest[23] <- "1"
+maplest[24] <- "0"
+maplest[25] <- "0"
+maplest[27] <- 2011
+maplest[28] <- "Normal"
+maplest.p <- predict(lasso.fit.3, maplest, interval="confidence", se.fit=TRUE) 
+maplest.p
+```
+We predict a log(SalePrice) for the house of 11.512. exp(11.512) = 100476. Using our rescaling method, the currently listed price for this house on zillow is 165,000 * .79 = $130,350. This house appears to be overvalued.
+
+The other house we are considering is listed here:
+```{r}
+house.listing.2 <- "https://www.zillow.com/homes/for_sale/Oak.dash.Riverside-Ames-IA/pmf,pf_pt/93957241_zpid/764182_rid/globalrelevanceex_sort/42.035795,-93.606327,42.009971,-93.648556_rect/14_zm/"
+russellave <- data6[1,]
+russellave[1] <- "RM"
+russellave[2] <- 8239
+russellave[3] <- "IDOTRR"
+russellave[4] <- "1Fam"
+russellave[5] <- "2Story"
+russellave[6] <- 5
+russellave[7] <- 1946
+russellave[9] <- "BrkFace"
+russellave[11] <- "TA"
+russellave[12] <- "TA"
+russellave[13] <- "CBlock"
+russellave[14] <- 775
+russellave[15] <- "Fa"
+russellave[16] <- 1737
+russellave[17] <- 1
+russellave[18] <- 3
+russellave[19] <- "Fa"
+russellave[20] <- 720
+russellave[21] <- "1"
+russellave[22] <- "1"
+russellave[23] <- "1"
+russellave[24] <- "0"
+russellave[25] <- "0"
+russellave[27] <- 2011
+russellave[28] <- "Normal"
+russellave.p <- predict(lasso.fit.3, russellave, interval="confidence", se.fit=TRUE) 
+russellave.p
+```
+We predict a log(SalePrice) of this house of 11.91, which is a predicted SalePrice of $148,146. Rescaling its current Zillow listing price to be a 2011 estimate, we get 220,000 * .79 = 173,800. That suggests that this listing is also overvalued based on our model. 
+We choose the house that is the least overvalued:
+```{r}
+#Maple St
+op.maple <- 130350 - 100476
+op.russell <- 173800 - 148146
+data.frame(op.maple, op.russell)
+```
+The Russell Avenue home is less overvalued according to our model, so we decide to purchase it.
+
+Dataframe of results:
+```{r}
+House_Name <- c('House 1', 'House 2')
+List_Price <- c(165000, 220000)
+Adjusted_Price <- c(130350, 173800)
+Model_Price <- c(100476, 148146)
+Difference <- c(29874, 25654)
+house.results <- cbind(House_Name, List_Price, Adjusted_Price, Model_Price, Difference)
+house.results <- as.data.frame(house.results)
+```
+
+# Classification
+
+We now try to classify whether a house is in overall low, medium, or high condition based on its features in the data. First we need to recategorize our response variable, Overall.Quad, from a categorical variable with 10 levels to one with three: low, medium, and high.
+
+```{r}
+data7 <- data5[,-30]
+data7$Overall.Qual <- cut(data7$Overall.Qual, breaks = 3)
+levels(data7$Overall.Qual) <- c("L", "M", "H")
+table(data7$Overall.Qual)
+```
+Overall.Qual now has three levels: Low (2-4), Medium (5-7), and High (8-10).
+
+
+Classification Through Neural Net:
+
+```{r}
+set.seed(10)
+data75.t <- data7
+levels(data75.t$MS.Zoning)[levels(data75.t$MS.Zoning)=="C (all)"] <- "C"
+levels(data75.t$MS.Zoning)[levels(data75.t$MS.Zoning)=="I (all)"] <- "I"
+data75.t <- data75.t[,-c(7,10:11)]
+index.train <-  sample(2465, 1965, replace = FALSE)
+data9.t <- data75.t #[index.train,]
+inds.1.t <- nnet::class.ind(data9.t$Overall.Qual)
+data10.t <- model.matrix(Overall.Qual ~., data9.t)[,-c(1)]
+data10.t <- data10.t[,-c(3,57,84)]
+#46:47
+d_scale.1.t <- as.matrix(scale(data10.t))
+d_scale.2 <- d_scale.1.t[index.train,]
+data.test <- d_scale.1.t[-index.train,]
+inds.2.t <- inds.1.t[index.train,]
+sample_dat.1.t <- data.frame(d_scale.2, inds.2.t)
+colnames(inds.1.t) <- paste(colnames(inds.1.t), sep = "") 
+z.t <- as.formula(paste(paste(colnames(inds.1.t), collapse = "+"), "~", paste(colnames(data10.t), collapse = "+")))
+nn1.t <- neuralnet::neuralnet(z.t, data = sample_dat.1.t, hidden = c(55), linear.output = F)
+data.frame(nn1.t$net.result, nn1.t$response)
+```
+
+Using the nn1.t for prediction:
+```{r}
+set.seed(10)
+pr.nn <- neuralnet::compute(nn1.t, data.test)
+# Remove Labels, keep only X's 
+pred.1 <- sapply(1:nrow(pr.nn$net.result), 
+                 function(x) which.max(pr.nn$net.result[x,])-1)
+pred.1 <- as.factor(pred.1)
+levels(pred.1) <- c("L", "M", "H")
+mean(pred.1 != data9.t$Overall.Qual[-index.train])
+```
+MCE for the neural net was 0.224.
+
+Random Forest:
+Random Forest and Boosting
+```{r, eval = FALSE}
+set.seed(10)
+par(mfrow=c(3,1))
+data7.1 <- data7[,-7]
+#fit.rf <- randomForest(Overall.Qual~., data7, mtry = 28, ntree=100)
+rf.error.p <- vector()
+for (p in 1:28)  # repeat the following code inside { } 19 times
+{
+  fit.rf <- randomForest(Overall.Qual~., data7.1, mtry=p, ntree=100)
+  #plot(fit.rf, col= p, lwd = 3)
+  fit.rf.pred.y <- predict(fit.rf, type="response")
+  rf.error.p[p] <- mean(data7$Overall.Qual != fit.rf.pred.y)  # collecting oob mse based on 100 trees
+}
+rf.error.p   # oob mse returned: should be a vector of 28
+jpeg('rf.plot.jpg')
+rf.plot <- plot(1:(length(data7.1)), rf.error.p, pch=16,
+     xlab="mtry",
+     ylab="MCE of mtry", main = "Mtry Tuning") 
+dev.off()
+```
+MSE for Random Forest was at its minimum 0.119 with mtry = 4.
+```{r, eval = FALSE}
+set.seed(10)
+fit.rf.optimal <- randomForest(Overall.Qual~., data7.1, mtry = 4, ntree = 100)
+#save(fit.rf.optimal, file="/Users/Georgefolder/Documents/All Documents/School/School 2017-18/STAT471/Final Project/RandomForest.RData")
+fit.rf.optimal.pred <- predict(fit.rf.optimal, type = "prob")
+roc(data7$Overall.Qual, fit.rf.optimal.pred[,2], plot=TRUE)
+```
+Logistic:
+```{r}
+data7.log <- data7[,-7]
+data7.log.train <- data7.log[index.train,]
+data7.log.test <- data7.log[-index.train,]
+X2 <- model.matrix(data7.log.train$Overall.Qual~., data7.log.train)[,-1]
+Y2 <- data7.log.train[,6]
+```
+
+```{r}
+set.seed(10)
+#Enet 
+fit.cv.logit <- cv.glmnet(X2, Y2, alpha=0.99, family="multinomial", nfolds = 10, type.measure = "deviance")
+jpeg('cvlogit.jpeg')
+plot(fit.cv.logit)
+dev.off()
+```
+
+```{r}
+#fit.1se.logit <- glmnet(X, Y, alpha=0.99, lambda=fit.cv.logit$lambda.1se)
+coef.1se <- coef(fit.cv.logit, s="lambda.1se")  
+# non zero beta's
+# Multinomial logistic regression
+fit.logit.enet <- multinom(data7.log.train$Overall.Qual ~ Neighborhood + Exterior.1st + Year.Remod.Add + Exter.Qual + Foundation + Total.Bsmt.SF + Gr.Liv.Area + Kitchen.Qual + Garage.Area, data7.log.train)
+Anova(fit.logit.enet)
+# Kick out variables that are not significant at the 0.01 level
+fit.logit.enet2 <- multinom(data7.log.train$Overall.Qual ~ Neighborhood + Exterior.1st + Exter.Qual + Total.Bsmt.SF + Gr.Liv.Area + Kitchen.Qual + Garage.Area, data7.log.train)
+anov2 <- Anova(fit.logit.enet2)
+```
+Logistic In Sample Erro
+```{r}
+set.seed(10)
+lasso.prob <- predict(fit.logit.enet, data7.log.test)
+lasso.error.insample <- mean(data7.log.test$Overall.Qual != lasso.prob)
+lasso.error.insample
+```
+
+```{r xtable, results = "asis"}
+anov <- Anova(lasso.fit.3)
+print(xtable(anov), type = 'html')
+print(xtable(data2.z), type = 'html')
+print(xtable(data5.z), type = 'html')
+print(xtable(house.results), type = 'html')
+print(xtable(anov2), type = 'html')
+```
+
+
+
